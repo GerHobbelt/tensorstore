@@ -102,7 +102,7 @@ class GcsGrpcTest : public testing::Test {
     return kvstore::Open({{"driver", "gcs_grpc"},
                           {"endpoint", mock_service_.server_address()},
                           {"bucket", "bucket"},
-                          {"timeout", "100ms"}})
+                          {"timeout", "250ms"}})
         .value();
   }
 
@@ -212,6 +212,70 @@ TEST_F(GcsGrpcTest, ReadWithOptions) {
   auto store = OpenStore();
   TENSORSTORE_ASSERT_OK_AND_ASSIGN(
       auto result, kvstore::Read(store, "abc", options).result());
+}
+
+TEST_F(GcsGrpcTest, ReadStatCrc32c) {
+  ReadObjectRequest expected_request = ParseTextProtoOrDie(R"pb(
+    bucket: 'projects/_/buckets/bucket'
+    object: 'abc'
+    read_limit: 1
+  )pb");
+
+  EXPECT_CALL(mock(), ReadObject(_, EqualsProto(expected_request), _))
+      .Times(AtLeast(1))
+      .WillRepeatedly(
+          [](auto*, auto*,
+             grpc::ServerWriter<ReadObjectResponse>* resp) -> ::grpc::Status {
+            ReadObjectResponse response = ParseTextProtoOrDie(R"pb(
+              metadata { generation: 2 }
+              object_checksums { crc32c: 12345678 }
+            )pb");
+            resp->Write(response);
+            return grpc::Status::OK;
+          });
+
+  kvstore::ReadOptions options;
+  options.byte_range = OptionalByteRangeRequest::Stat();
+
+  auto store = OpenStore();
+  TENSORSTORE_ASSERT_OK_AND_ASSIGN(
+      auto result, kvstore::Read(store, "abc", options).result());
+
+  EXPECT_TRUE(result.has_value());
+  EXPECT_EQ(result.value.size(), 0);
+}
+
+TEST_F(GcsGrpcTest, ReadSingleByteRangeCrc32c) {
+  ReadObjectRequest expected_request = ParseTextProtoOrDie(R"pb(
+    bucket: 'projects/_/buckets/bucket'
+    object: 'abc'
+    read_offset: 10
+    read_limit: 1
+  )pb");
+
+  EXPECT_CALL(mock(), ReadObject(_, EqualsProto(expected_request), _))
+      .Times(AtLeast(1))
+      .WillRepeatedly(
+          [](auto*, auto*,
+             grpc::ServerWriter<ReadObjectResponse>* resp) -> ::grpc::Status {
+            ReadObjectResponse response = ParseTextProtoOrDie(R"pb(
+              metadata { generation: 2 }
+              object_checksums { crc32c: 12345678 }
+              checksummed_data { content: 'X' }
+            )pb");
+            resp->Write(response);
+            return grpc::Status::OK;
+          });
+
+  kvstore::ReadOptions options;
+  options.byte_range = OptionalByteRangeRequest{10, 11};
+
+  auto store = OpenStore();
+  TENSORSTORE_ASSERT_OK_AND_ASSIGN(
+      auto result, kvstore::Read(store, "abc", options).result());
+
+  EXPECT_TRUE(result.has_value());
+  EXPECT_EQ(result.value, "X");
 }
 
 TEST_F(GcsGrpcTest, ReadMultipleMessages) {
