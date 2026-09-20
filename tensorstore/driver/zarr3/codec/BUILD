@@ -227,6 +227,18 @@ tensorstore_cc_test(
     ],
 )
 
+tensorstore_cc_test(
+    name = "crc32c_test",
+    size = "small",
+    srcs = ["crc32c_test.cc"],
+    deps = [
+        ":bytes",
+        ":codec_test_util",
+        ":crc32c",
+        "@googletest//:gtest_main",
+    ],
+)
+
 tensorstore_cc_library(
     name = "sharding_indexed",
     srcs = ["sharding_indexed.cc"],
@@ -405,11 +417,13 @@ tensorstore_cc_test(
     name = "codec_chain_spec_test",
     srcs = ["codec_chain_spec_test.cc"],
     deps = [
+        ":codec",
         ":codec_chain_spec",
         ":codec_test_util",
         ":gzip",
         ":sharding_indexed",
         "//tensorstore:codec_spec",
+        "//tensorstore:data_type",
         "//tensorstore/internal/testing:json_gtest",
         "//tensorstore/util:status_testutil",
         "@abseil-cpp//absl/status",
