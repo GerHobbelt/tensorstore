@@ -20,8 +20,8 @@
 namespace tensorstore {
 namespace internal_metrics {
 
-template <typename MetricType>
-std::shared_ptr<void> RegisterMetricHook(const MetricType* metric) {
+template <typename MetricType, typename... Args>
+std::shared_ptr<void> RegisterMetricHook(const MetricType* metric, Args&&...) {
   return nullptr;
 }
 

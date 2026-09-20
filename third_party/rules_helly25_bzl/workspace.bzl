@@ -25,7 +25,7 @@ def repo():
     maybe(
         http_archive,
         name = "helly25_bzl",
-        urls = mirror_url("https://github.com/helly25/bzl/releases/download/0.3.1/bzl-0.3.1.tar.gz"),
-        sha256 = "c8e28a3cb7e465b4b71f5d4d366c5796cc0ae822fa510a8adf12cf39a9709902",
-        strip_prefix = "bzl-0.3.1",
+        urls = mirror_url("https://github.com/helly25/bzl/archive/0.4.4.tar.gz"),
+        sha256 = "1811b79a149672572de366d708685f4a837776009e8d6cbf0516f37933eed940",
+        strip_prefix = "bzl-0.4.4",
     )

@@ -27,10 +27,10 @@ def repo():
     maybe(
         third_party_http_archive,
         name = "googletest",
-        doc_version = "20260206-5a9c3f9",
-        urls = mirror_url("https://github.com/google/googletest/archive/5a9c3f9e8d9b90bbbe8feb32902146cb8f7c1757.zip"),  # main(2026-02-06)
-        sha256 = "b83b54c3bf02f6e501f85ba99b8f7359c4c19c33d3a69857cdffb9dc501f7724",
-        strip_prefix = "googletest-5a9c3f9e8d9b90bbbe8feb32902146cb8f7c1757",
+        doc_version = "20260620-0b1e895",
+        urls = mirror_url("https://github.com/google/googletest/archive/0b1e895ba4226c2fda5ee0178c9b5b1195a741aa.zip"),  # main(2026-06-20)
+        sha256 = "3fcc9a790e7253b240cdabb82eedcf2058159cdbdb151c62591a07a99d2a4709",
+        strip_prefix = "googletest-0b1e895ba4226c2fda5ee0178c9b5b1195a741aa",
         cmake_name = "GTest",
         bazel_to_cmake = {
             "include": [""],

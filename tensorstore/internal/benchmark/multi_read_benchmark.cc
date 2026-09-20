@@ -46,7 +46,6 @@ bazel run -c opt \
 #include "absl/log/absl_log.h"
 #include "absl/log/log.h"
 #include "absl/status/status.h"
-#include "absl/strings/match.h"
 #include "absl/strings/str_format.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
@@ -54,14 +53,16 @@ bazel run -c opt \
 #include "absl/time/time.h"
 #include <nlohmann/json.hpp>
 #include "tensorstore/array.h"
+#include "tensorstore/batch.h"
 #include "tensorstore/context.h"
 #include "absl/flags/parse.h"
+#include "tensorstore/internal/benchmark/benchmark_utils.h"
 #include "tensorstore/internal/benchmark/metric_utils.h"
 #include "tensorstore/internal/benchmark/multi_spec.h"
 #include "tensorstore/internal/json_binding/std_array.h"  // IWYU pragma: keep
 #include "tensorstore/internal/metrics/metadata.h"
+#include "tensorstore/internal/metrics/registration.h"
 #include "tensorstore/internal/metrics/value.h"
-#include "tensorstore/internal/os/file_util.h"
 #include "tensorstore/internal/os/hugepages.h"
 #include "tensorstore/open.h"
 #include "tensorstore/open_mode.h"
@@ -90,6 +91,11 @@ ABSL_FLAG(std::string, read_config, {},
 ABSL_FLAG(int64_t, repeat_reads, 1,
           "Number of times to repeat read benchmark.");
 
+ABSL_FLAG(int64_t, read_batch_size, 0,
+          "Group reads into batches of this size to coalesce range reads. "
+          "Uses tensorstore::Batch. 0 means no batch (default). "
+          "-1 means all reads in a single batch.");
+
 ABSL_FLAG(int64_t, max_in_flight, 64ll * 1024 * 1024 * 1024,  // 64GB
           "Maximum number of in_flight bytes.");
 
@@ -101,14 +107,14 @@ ABSL_FLAG(std::optional<std::string>, metrics_prefix, std::nullopt,
 
 ABSL_FLAG(int64_t, ith_spec, -1, "Start at the ith spec in the config file.");
 
+TENSORSTORE_DECLARE_AND_REGISTER_METRIC(
+    read_throughput, Value<double>,
+    MetricMetadata("/tensorstore/ts_read_benchmark/read_throughput",
+                   "the read throughput in this test"));
 namespace tensorstore {
 namespace {
 
 using ::tensorstore::internal_benchmark::ReadSpecsFromFile;
-
-auto& read_throughput = internal_metrics::Value<double>::New(
-    "/tensorstore/ts_read_benchmark/read_throughput",
-    internal_metrics::MetricMetadata("the read throughput in this test"));
 
 std::vector<tensorstore::TensorStore<>> MultiOpen(
     std::vector<tensorstore::Context> context,
@@ -151,9 +157,13 @@ struct ReadContinuation {
   size_t i = 0;
   int64_t in_flight = 0;
 
+  internal_benchmark::ReadBatcher batcher;
+
   ReadContinuation(const std::vector<tensorstore::TensorStore<>>& stores,
-                   int64_t max_in_flight)
-      : stores(stores), max_in_flight(max_in_flight) {}
+                   int64_t max_in_flight, int64_t batch_size)
+      : stores(stores),
+        max_in_flight(max_in_flight),
+        batcher(batch_size, stores.size()) {}
 };
 
 static bool StartNextRead(tensorstore::Promise<void> promise,
@@ -161,6 +171,7 @@ static bool StartNextRead(tensorstore::Promise<void> promise,
                           size_t finish) {
   int64_t estimate = 0;
   Future<SharedOffsetArray<void>> read_future;
+  Batch batch_to_release = Batch::no_batch;
 
   {
     absl::MutexLock lock(self->mutex);
@@ -176,9 +187,16 @@ static bool StartNextRead(tensorstore::Promise<void> promise,
     const size_t i = self->i++;
     const auto& ts = self->stores[i];
 
-    int64_t estimate = GetBytesEstimate(ts);
+    estimate = GetBytesEstimate(ts);
     self->in_flight += estimate;
-    read_future = tensorstore::Read(ts);
+
+    auto next_res = self->batcher.NextBatch();
+    batch_to_release = next_res.batch_to_release;
+    read_future = tensorstore::Read(ts, next_res.batch_to_use);
+  }
+
+  if (batch_to_release) {
+    batch_to_release.Release();
   }
 
   // Release the mutex before calling Link; the callback may be immediately
@@ -221,12 +239,21 @@ Stats DoSinglePass(const std::vector<tensorstore::TensorStore<>>& stores,
                    size_t bytes_semaphore) {
   auto [promise, future] = PromiseFuturePair<void>::Make(absl::OkStatus());
 
-  auto cont = std::make_shared<ReadContinuation>(stores, bytes_semaphore);
+  auto cont = std::make_shared<ReadContinuation>(
+      stores, bytes_semaphore, absl::GetFlag(FLAGS_read_batch_size));
   Stats stats;
   stats.start_time = absl::Now();
 
   while (StartNextRead(promise, cont, 0)) {
     /* */
+  }
+  Batch final_batch = Batch::no_batch;
+  if (absl::GetFlag(FLAGS_read_batch_size) != 0) {
+    absl::MutexLock lock(cont->mutex);
+    final_batch = cont->batcher.Flush();
+  }
+  if (final_batch) {
+    final_batch.Release();
   }
   promise = {};
   future.Wait();
@@ -332,6 +359,9 @@ void CheckTransparentHugePages() {
 
 void Run(int argc, char** argv) {
   ABSL_CHECK(absl::GetFlag(FLAGS_repeat_reads) > 0);
+  int64_t batch_size = absl::GetFlag(FLAGS_read_batch_size);
+  ABSL_QCHECK(batch_size >= -1)
+      << "--read_batch_size must be >= -1, got " << batch_size;
 
   std::vector<tensorstore::Spec> specs =
       ReadSpecsFromFile(absl::GetFlag(FLAGS_read_config));

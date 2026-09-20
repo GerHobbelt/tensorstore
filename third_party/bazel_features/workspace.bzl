@@ -25,7 +25,7 @@ def repo():
     maybe(
         http_archive,
         name = "bazel_features",
-        sha256 = "966c211ec42c4deb2af4c6dd6948408100b752f61753c97055bdac9bfb5cc0c7",
-        strip_prefix = "bazel_features-1.41.0",
-        urls = mirror_url("https://github.com/bazel-contrib/bazel_features/archive/v1.41.0.tar.gz"),
+        sha256 = "add57e2e086463075805e153c37e03bb74c4737773fc5879336733af08e6f086",
+        strip_prefix = "bazel_features-1.49.0",
+        urls = mirror_url("https://github.com/bazel-contrib/bazel_features/archive/v1.49.0.tar.gz"),
     )

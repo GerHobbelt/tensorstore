@@ -25,14 +25,17 @@ def repo():
     maybe(
         third_party_http_archive,
         name = "brotli",
-        doc_version = "1.1.0-20260206-5fa73e2",
-        urls = mirror_url("https://github.com/google/brotli/archive/5fa73e23bee34f84148719576a7a434f0fc43dc8.zip"),  # master(2026-02-06)
-        sha256 = "f45ded02b61979183039ee66ec29c52bc44827a71676732df57821c40e33bba9",
-        strip_prefix = "brotli-5fa73e23bee34f84148719576a7a434f0fc43dc8",
+        doc_version = "1.1.0-20260620-83fe766",
+        urls = mirror_url("https://github.com/google/brotli/archive/83fe766bc81f7911a78716b8d3b3d01367009995.zip"),  # master(2026-06-20)
+        sha256 = "7062dad70a692e5dd2abe3cb9ea65f379553f6727b2b7125d05b57414f46370a",
+        strip_prefix = "brotli-83fe766bc81f7911a78716b8d3b3d01367009995",
         patches = [
             Label("//third_party:brotli/patches/fix_ror.diff"),
         ],
         patch_args = ["-p1"],
+        repo_mapping = {
+            "@org_brotli": "@brotli",
+        },
         system_build_file = Label("//third_party:brotli/system.BUILD.bazel"),
         cmake_name = "Brotli",
         bazel_to_cmake = {},

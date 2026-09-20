@@ -24,10 +24,12 @@ tensorstore_cc_library(
     name = "zip",
     srcs = ["zip_key_value_store.cc"],
     deps = [
+        ":cached_dir",
         ":zip_dir_cache",
         "//tensorstore:context",
         "//tensorstore:transaction",
         "//tensorstore/internal:data_copy_concurrency_resource",
+        "//tensorstore/internal:global_initializer",
         "//tensorstore/internal:intrusive_ptr",
         "//tensorstore/internal/cache",
         "//tensorstore/internal/cache:async_cache",
@@ -60,6 +62,7 @@ tensorstore_cc_library(
         "@abseil-cpp//absl/strings",
         "@abseil-cpp//absl/strings:cord",
         "@abseil-cpp//absl/strings:str_format",
+        "@abseil-cpp//absl/time",
         "@riegeli//riegeli/bytes:cord_reader",
     ],
     alwayslink = 1,
@@ -69,13 +72,16 @@ tensorstore_cc_test(
     name = "zip_key_value_store_test",
     srcs = ["zip_key_value_store_test.cc"],
     args = [
-        "--tensorstore_test_data=$(location //tensorstore/internal/compression:testdata)",
+        "--tensorstore_test_data=$(location //tensorstore/internal/compression:testdata/data.zip)",
     ],
-    data = ["//tensorstore/internal/compression:testdata"],
+    data = ["//tensorstore/internal/compression:testdata/data.zip"],
     deps = [
         ":zip",  # build_cleaner: keep
         "//tensorstore:context",
+        "//tensorstore/internal/compression:zip_details",
+        "//tensorstore/internal/compression:zip_easy",
         "//tensorstore/kvstore",
+        "//tensorstore/kvstore:byte_range",
         "//tensorstore/kvstore:generation",
         "//tensorstore/kvstore:test_matchers",
         "//tensorstore/kvstore:test_util",
@@ -91,6 +97,7 @@ tensorstore_cc_test(
         "@abseil-cpp//absl/synchronization",
         "@googletest//:gtest_main",
         "@nlohmann_json//:json",
+        "@riegeli//riegeli/bytes:cord_writer",
         "@riegeli//riegeli/bytes:fd_reader",
         "@riegeli//riegeli/bytes:read_all",
     ],
@@ -101,7 +108,7 @@ tensorstore_cc_library(
     srcs = ["zip_dir_cache.cc"],
     hdrs = ["zip_dir_cache.h"],
     deps = [
-        "//tensorstore:data_type",
+        ":cached_dir",
         "//tensorstore/internal:intrusive_ptr",
         "//tensorstore/internal/cache",
         "//tensorstore/internal/cache:async_cache",
@@ -119,7 +126,6 @@ tensorstore_cc_library(
         "@abseil-cpp//absl/log:absl_log",
         "@abseil-cpp//absl/status",
         "@abseil-cpp//absl/strings:cord",
-        "@abseil-cpp//absl/strings:str_format",
         "@abseil-cpp//absl/time",
         "@riegeli//riegeli/bytes:cord_reader",
         "@riegeli//riegeli/bytes:cord_writer",
@@ -130,15 +136,19 @@ tensorstore_cc_test(
     name = "zip_dir_cache_test",
     srcs = ["zip_dir_cache_test.cc"],
     args = [
-        "--tensorstore_test_data=$(location //tensorstore/internal/compression:testdata)",
+        "--tensorstore_test_data=$(location //tensorstore/internal/compression:testdata/data.zip)",
     ],
-    data = ["//tensorstore/internal/compression:testdata"],
+    data = [
+        "//tensorstore/internal/compression:testdata/data.zip",
+        "//tensorstore/internal/compression:testdata/zip_test2.zip",
+    ],
     deps = [
         ":zip_dir_cache",
         "//tensorstore:context",
         "//tensorstore/internal:intrusive_ptr",
         "//tensorstore/internal/cache",
         "//tensorstore/kvstore",
+        "//tensorstore/kvstore:mock_kvstore",
         "//tensorstore/kvstore:test_util",
         "//tensorstore/kvstore/memory",
         "//tensorstore/util:executor",
@@ -152,5 +162,38 @@ tensorstore_cc_test(
         "@googletest//:gtest_main",
         "@riegeli//riegeli/bytes:fd_reader",
         "@riegeli//riegeli/bytes:read_all",
+    ],
+)
+
+tensorstore_cc_test(
+    name = "cached_dir_test",
+    srcs = ["cached_dir_test.cc"],
+    deps = [
+        ":cached_dir",
+        "//tensorstore/internal/compression:zip_details",
+        "//tensorstore/internal/compression:zip_easy",
+        "//tensorstore/util:result",
+        "//tensorstore/util:status_testutil",
+        "@abseil-cpp//absl/status",
+        "@abseil-cpp//absl/strings:cord",
+        "@abseil-cpp//absl/strings:str_format",
+        "@googletest//:gtest_main",
+        "@riegeli//riegeli/bytes:cord_reader",
+        "@riegeli//riegeli/bytes:cord_writer",
+    ],
+)
+
+tensorstore_cc_library(
+    name = "cached_dir",
+    srcs = ["cached_dir.cc"],
+    hdrs = ["cached_dir.h"],
+    deps = [
+        "//tensorstore/internal/compression:zip_details",
+        "//tensorstore/util:result",
+        "//tensorstore/util:status",
+        "@abseil-cpp//absl/container:flat_hash_set",
+        "@abseil-cpp//absl/status",
+        "@abseil-cpp//absl/strings:str_format",
+        "@riegeli//riegeli/bytes:reader",
     ],
 )

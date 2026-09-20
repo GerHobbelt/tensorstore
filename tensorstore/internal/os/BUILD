@@ -118,6 +118,7 @@ tensorstore_cc_library(
         "//tensorstore/internal/log:verbose_flag",
         "//tensorstore/internal/metrics",
         "//tensorstore/internal/metrics:metadata",
+        "//tensorstore/internal/metrics:registration",
         "//tensorstore/internal/testing:test_hook",
         "//tensorstore/internal/tracing",
         "//tensorstore/util:quote_string",
@@ -144,7 +145,7 @@ tensorstore_cc_library(
         ":file_descriptor",
         ":file_util",
         "//tensorstore/internal/metrics",
-        "//tensorstore/internal/metrics:metadata",
+        "//tensorstore/internal/metrics:registration",
         "//tensorstore/util:quote_string",
         "//tensorstore/util:result",
         "//tensorstore/util:status",
@@ -440,5 +441,16 @@ tensorstore_cc_test(
         "@abseil-cpp//absl/status",
         "@abseil-cpp//absl/strings:cord",
         "@googletest//:gtest_main",
+    ],
+)
+
+tensorstore_cc_library(
+    name = "shutdown",
+    srcs = ["shutdown.cc"],
+    hdrs = ["shutdown.h"],
+    deps = [
+        ":include_windows",
+        "//tensorstore/internal:source_location",
+        "@abseil-cpp//absl/log:absl_log",
     ],
 )
