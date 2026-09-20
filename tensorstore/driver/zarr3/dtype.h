@@ -24,8 +24,8 @@
 #include <string_view>
 #include <vector>
 
-#include <nlohmann/json.hpp>
 #include "absl/status/status.h"
+#include <nlohmann/json.hpp>
 #include "tensorstore/data_type.h"
 #include "tensorstore/index.h"
 #include "tensorstore/internal/json_binding/bindable.h"
@@ -41,7 +41,8 @@ namespace internal_zarr3 {
 /// A zarr "dtype" is a JSON value that is either:
 ///
 /// 1. A string, which specifies a single data type (e.g. "int32").
-///    In this case, the zarr array is considered to have a single, unnamed field.
+///    In this case, the zarr array is considered to have a single, unnamed
+///    field.
 ///
 /// 2. An array, where each element of the array is of the form:
 ///    `[name, type]`, where `name` is a JSON string specifying the unique,
@@ -78,8 +79,10 @@ struct ZarrDType {
     /// specified as an array.  Otherwise, is empty.
     std::string name;
 
-    /// Inner array dimensions of this field, derived from `flexible_shape`.
-    /// Used for raw_bytes dtype and open_as_void byte dimensions.
+    /// Inner array dimensions of this field (derived from `flexible_shape`).
+    ///
+    /// Empty for scalar fields.  For raw byte fields (e.g. `r24`) this is
+    /// surfaced as trailing dimensions in the user-visible array.
     std::vector<Index> field_shape;
 
     /// Product of `field_shape` dimensions (derived value).
@@ -99,9 +102,7 @@ struct ZarrDType {
              a.num_inner_elements == b.num_inner_elements &&
              a.byte_offset == b.byte_offset && a.num_bytes == b.num_bytes;
     }
-    friend bool operator!=(const Field& a, const Field& b) {
-      return !(a == b);
-    }
+    friend bool operator!=(const Field& a, const Field& b) { return !(a == b); }
   };
 
   /// Equal to `true` if the zarr "dtype" was specified as an array, in which
@@ -115,11 +116,18 @@ struct ZarrDType {
   /// Bytes per "outer" element (derived value).
   Index bytes_per_outer_element;
 
+  /// True if parsed from the legacy `"structured"` alias (see
+  /// https://github.com/zarr-developers/zarr-extensions/tree/main/data-types/structured);
+  /// gates the legacy affordances (tuple fields, missing-endian default,
+  /// base64/array fill).  Not equality-compared; `to_json` always emits
+  /// the modern `"struct"` form.
+  bool is_legacy_structured = false;
+
   TENSORSTORE_DECLARE_JSON_DEFAULT_BINDER(ZarrDType,
                                           internal_json_binding::NoOptions)
 
   friend void to_json(::nlohmann::json& out,  // NOLINT
-                      const ZarrDType& dtype);
+                      const ZarrDType& zarr_dtype);
 
   friend bool operator==(const ZarrDType& a, const ZarrDType& b) {
     return a.has_fields == b.has_fields &&
@@ -136,12 +144,12 @@ struct ZarrDType {
 /// \error `absl::StatusCode::kInvalidArgument` if `value` is not valid.
 Result<ZarrDType> ParseDType(const ::nlohmann::json& value);
 
-/// Validates `dtype and computes derived values.
+/// Validates `zarr_dtype` and computes derived values.
 ///
 /// \error `absl::StatusCode::kInvalidArgument` if two fields have the same
 ///     name.
 /// \error `absl::StatusCode::kInvalidArgument` if the field size is too large.
-absl::Status ValidateDType(ZarrDType& dtype);
+absl::Status ValidateDType(ZarrDType& zarr_dtype);
 
 /// Parses a Zarr 3 data type string.
 ///

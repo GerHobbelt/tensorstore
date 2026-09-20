@@ -18,16 +18,17 @@
 #include <stdint.h>
 
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "absl/status/status.h"
+#include "absl/strings/str_cat.h"
 #include <nlohmann/json.hpp>
 #include "tensorstore/data_type.h"
 #include "tensorstore/index.h"
 #include "tensorstore/internal/testing/json_gtest.h"
-#include "absl/strings/str_cat.h"
 #include "tensorstore/util/status_testutil.h"
 
 namespace {
@@ -35,21 +36,23 @@ namespace {
 using ::tensorstore::DataType;
 using ::tensorstore::dtype_v;
 using ::tensorstore::Index;
+using ::tensorstore::IsOkAndHolds;
 using ::tensorstore::StatusIs;
 using ::tensorstore::internal_zarr3::ChooseBaseDType;
 using ::tensorstore::internal_zarr3::ParseBaseDType;
 using ::tensorstore::internal_zarr3::ParseDType;
+using ::tensorstore::internal_zarr3::ValidateDType;
 using ::tensorstore::internal_zarr3::ZarrDType;
 using ::testing::HasSubstr;
-using ::tensorstore::IsOkAndHolds;
 
-// Matcher to check if a string parses successfully to a specific ZarrDType::BaseDType.
+// Matcher to check if a string parses successfully to a specific
+// ZarrDType::BaseDType.
 MATCHER_P2(ParsesAsBaseDType, expected_data_type, expected_flexible_shape, "") {
   auto parsed = ParseBaseDType(arg);
   return ExplainMatchResult(
       ::testing::Optional(::testing::AllOf(
-          ::testing::Field("encoded_dtype", &ZarrDType::BaseDType::encoded_dtype,
-                           arg),
+          ::testing::Field("encoded_dtype",
+                           &ZarrDType::BaseDType::encoded_dtype, arg),
           ::testing::Field("dtype", &ZarrDType::BaseDType::dtype,
                            expected_data_type),
           ::testing::Field("flexible_shape",
@@ -72,37 +75,43 @@ void AddFieldToZarrDType(ZarrDType& dtype, ZarrDType::Field field) {
 }
 
 TEST(ParseBaseDType, Success) {
-  EXPECT_THAT("bool", ParsesAsBaseDType(dtype_v<bool>, std::vector<Index>{}));
-  EXPECT_THAT("int8", ParsesAsBaseDType(dtype_v<int8_t>, std::vector<Index>{}));
-  EXPECT_THAT("uint8", ParsesAsBaseDType(dtype_v<uint8_t>, std::vector<Index>{}));
-  EXPECT_THAT("int16", ParsesAsBaseDType(dtype_v<int16_t>, std::vector<Index>{}));
-  EXPECT_THAT("uint16", ParsesAsBaseDType(dtype_v<uint16_t>, std::vector<Index>{}));
-  EXPECT_THAT("int32", ParsesAsBaseDType(dtype_v<int32_t>, std::vector<Index>{}));
-  EXPECT_THAT("uint32", ParsesAsBaseDType(dtype_v<uint32_t>, std::vector<Index>{}));
-  EXPECT_THAT("int64", ParsesAsBaseDType(dtype_v<int64_t>, std::vector<Index>{}));
-  EXPECT_THAT("uint64", ParsesAsBaseDType(dtype_v<uint64_t>, std::vector<Index>{}));
-  EXPECT_THAT("float16", ParsesAsBaseDType(dtype_v<tensorstore::dtypes::float16_t>, std::vector<Index>{}));
-  EXPECT_THAT("bfloat16", ParsesAsBaseDType(dtype_v<tensorstore::dtypes::bfloat16_t>, std::vector<Index>{}));
-  EXPECT_THAT("float32", ParsesAsBaseDType(dtype_v<tensorstore::dtypes::float32_t>, std::vector<Index>{}));
-  EXPECT_THAT("float64", ParsesAsBaseDType(dtype_v<tensorstore::dtypes::float64_t>, std::vector<Index>{}));
-  EXPECT_THAT("complex64", ParsesAsBaseDType(dtype_v<tensorstore::dtypes::complex64_t>, std::vector<Index>{}));
-  EXPECT_THAT("complex128", ParsesAsBaseDType(dtype_v<tensorstore::dtypes::complex128_t>, std::vector<Index>{}));
-  EXPECT_THAT("r8", ParsesAsBaseDType(dtype_v<tensorstore::dtypes::byte_t>, std::vector<Index>{1}));
-  EXPECT_THAT("r16", ParsesAsBaseDType(dtype_v<tensorstore::dtypes::byte_t>, std::vector<Index>{2}));
-  EXPECT_THAT("r64", ParsesAsBaseDType(dtype_v<tensorstore::dtypes::byte_t>, std::vector<Index>{8}));
+  // Exhaustively cover every tensorstore numeric data type using the
+  // TENSORSTORE_FOR_EACH_*_DATA_TYPE macros so new dtypes are picked up
+  // automatically.
+#define TENSORSTORE_INTERNAL_DO_CHECK_BASE_DTYPE(T)                     \
+  EXPECT_THAT(std::string(tensorstore::internal_data_type::GetTypeName< \
+                          tensorstore::dtypes::T>()),                   \
+              ParsesAsBaseDType(dtype_v<tensorstore::dtypes::T>,        \
+                                std::vector<Index>{}));                 \
+  /**/
+  TENSORSTORE_INTERNAL_DO_CHECK_BASE_DTYPE(bool_t)
+  TENSORSTORE_FOR_EACH_INT_DATA_TYPE(TENSORSTORE_INTERNAL_DO_CHECK_BASE_DTYPE)
+  TENSORSTORE_FOR_EACH_FLOAT_DATA_TYPE(TENSORSTORE_INTERNAL_DO_CHECK_BASE_DTYPE)
+  TENSORSTORE_FOR_EACH_COMPLEX_DATA_TYPE(
+      TENSORSTORE_INTERNAL_DO_CHECK_BASE_DTYPE)
+#undef TENSORSTORE_INTERNAL_DO_CHECK_BASE_DTYPE
+
+  EXPECT_THAT("r8", ParsesAsBaseDType(dtype_v<tensorstore::dtypes::byte_t>,
+                                      std::vector<Index>{1}));
+  EXPECT_THAT("r16", ParsesAsBaseDType(dtype_v<tensorstore::dtypes::byte_t>,
+                                       std::vector<Index>{2}));
+  EXPECT_THAT("r64", ParsesAsBaseDType(dtype_v<tensorstore::dtypes::byte_t>,
+                                       std::vector<Index>{8}));
   // Large N must parse (suffix may exceed 31-bit signed int; N fits in uint64).
   EXPECT_THAT("r1024", ParsesAsBaseDType(dtype_v<tensorstore::dtypes::byte_t>,
-                                        std::vector<Index>{128}));
-  EXPECT_THAT("r8388608", ParsesAsBaseDType(dtype_v<tensorstore::dtypes::byte_t>,
-                                             std::vector<Index>{1048576}));
-  EXPECT_THAT("r8589934592", ParsesAsBaseDType(dtype_v<tensorstore::dtypes::byte_t>,
-                                                std::vector<Index>{1073741824}));
-  // Max r<N>: N = largest multiple of 8 in uint64_t (18446744073709551608 bits -> 2305843009213693951
-  // bytes). Values above uint64_t fail parse; UINT64_MAX is not a multiple of 8.
-  EXPECT_THAT(
-      "r18446744073709551608",
-      ParsesAsBaseDType(dtype_v<tensorstore::dtypes::byte_t>,
-                        std::vector<Index>{2305843009213693951LL}));
+                                         std::vector<Index>{128}));
+  EXPECT_THAT("r8388608",
+              ParsesAsBaseDType(dtype_v<tensorstore::dtypes::byte_t>,
+                                std::vector<Index>{1048576}));
+  EXPECT_THAT("r8589934592",
+              ParsesAsBaseDType(dtype_v<tensorstore::dtypes::byte_t>,
+                                std::vector<Index>{1073741824}));
+  // Max r<N>: N = largest multiple of 8 in uint64_t (18446744073709551608 bits
+  // -> 2305843009213693951 bytes). Values above uint64_t fail parse; UINT64_MAX
+  // is not a multiple of 8.
+  EXPECT_THAT("r18446744073709551608",
+              ParsesAsBaseDType(dtype_v<tensorstore::dtypes::byte_t>,
+                                std::vector<Index>{2305843009213693951LL}));
 }
 
 TEST(ParseBaseDType, Failure) {
@@ -132,75 +141,70 @@ TEST(ParseBaseDType, Failure) {
 
 TEST(ParseDType, SimpleStringBool) {
   ZarrDType expected{};
-  AddFieldToZarrDType(expected,
-                      {{/*.encoded_dtype=*/"bool",
-                        /*.dtype=*/dtype_v<bool>,
-                        /*.flexible_shape=*/{}},
-                       /*.name=*/"",
-                       /*.field_shape=*/{},
-                       /*.num_inner_elements=*/1,
-                       /*.byte_offset=*/0,
-                       /*.num_bytes=*/1});
+  AddFieldToZarrDType(expected, {{/*.encoded_dtype=*/"bool",
+                                  /*.dtype=*/dtype_v<bool>,
+                                  /*.flexible_shape=*/{}},
+                                 /*.name=*/"",
+                                 /*.field_shape=*/{},
+                                 /*.num_inner_elements=*/1,
+                                 /*.byte_offset=*/0,
+                                 /*.num_bytes=*/1});
   EXPECT_THAT(ParseDType("bool"), IsOkAndHolds(expected));
 }
 
 TEST(ParseDType, SingleNamedFieldChar) {
-  // Zarr 3 doesn't support fixed size strings natively in core, so we use uint8 for testing bytes
+  // Zarr 3 doesn't support fixed size strings natively in core, so we use uint8
+  // for testing bytes
   ZarrDType expected{};
-  AddFieldToZarrDType(expected,
-                      {{/*.encoded_dtype=*/"uint8",
-                        /*.dtype=*/dtype_v<uint8_t>,
-                        /*.flexible_shape=*/{}},
-                       /*.name=*/"x",
-                       /*.field_shape=*/{},
-                       /*.num_inner_elements=*/1,
-                       /*.byte_offset=*/0,
-                       /*.num_bytes=*/1});
+  AddFieldToZarrDType(expected, {{/*.encoded_dtype=*/"uint8",
+                                  /*.dtype=*/dtype_v<uint8_t>,
+                                  /*.flexible_shape=*/{}},
+                                 /*.name=*/"x",
+                                 /*.field_shape=*/{},
+                                 /*.num_inner_elements=*/1,
+                                 /*.byte_offset=*/0,
+                                 /*.num_bytes=*/1});
   EXPECT_THAT(ParseDType(::nlohmann::json::array_t{{"x", "uint8"}}),
               IsOkAndHolds(expected));
 }
 
 TEST(ParseDType, TwoNamedFields) {
   ZarrDType expected{};
-  AddFieldToZarrDType(expected,
-                      {{/*.encoded_dtype=*/"int8",
-                        /*.dtype=*/dtype_v<int8_t>,
-                        /*.flexible_shape=*/{}},
-                       /*.name=*/"x",
-                       /*.field_shape=*/{},
-                       /*.num_inner_elements=*/1,
-                       /*.byte_offset=*/0,
-                       /*.num_bytes=*/1});
-  AddFieldToZarrDType(expected,
-                      {{/*.encoded_dtype=*/"int16",
-                        /*.dtype=*/dtype_v<int16_t>,
-                        /*.flexible_shape=*/{}},
-                       /*.name=*/"y",
-                       /*.field_shape=*/{},
-                       /*.num_inner_elements=*/1,
-                       /*.byte_offset=*/0,
-                       /*.num_bytes=*/2});
-  EXPECT_THAT(ParseDType(::nlohmann::json::array_t{{"x", "int8"}, {"y", "int16"}}),
-              IsOkAndHolds(expected));
+  AddFieldToZarrDType(expected, {{/*.encoded_dtype=*/"int8",
+                                  /*.dtype=*/dtype_v<int8_t>,
+                                  /*.flexible_shape=*/{}},
+                                 /*.name=*/"x",
+                                 /*.field_shape=*/{},
+                                 /*.num_inner_elements=*/1,
+                                 /*.byte_offset=*/0,
+                                 /*.num_bytes=*/1});
+  AddFieldToZarrDType(expected, {{/*.encoded_dtype=*/"int16",
+                                  /*.dtype=*/dtype_v<int16_t>,
+                                  /*.flexible_shape=*/{}},
+                                 /*.name=*/"y",
+                                 /*.field_shape=*/{},
+                                 /*.num_inner_elements=*/1,
+                                 /*.byte_offset=*/0,
+                                 /*.num_bytes=*/2});
+  EXPECT_THAT(
+      ParseDType(::nlohmann::json::array_t{{"x", "int8"}, {"y", "int16"}}),
+      IsOkAndHolds(expected));
 }
 
 TEST(ParseDType, FieldSpecTooShort) {
   EXPECT_THAT(
       ParseDType(::nlohmann::json::array_t{{"x"}}),
-      StatusIs(
-          absl::StatusCode::kInvalidArgument,
-          HasSubstr("Error parsing value at position 0: "
-                    "Expected array of size 2, but received: [\"x\"]")));
+      StatusIs(absl::StatusCode::kInvalidArgument,
+               HasSubstr("Error parsing value at position 0: "
+                         "Expected array of size 2, but received: [\"x\"]")));
 }
 
 TEST(ParseDType, FieldSpecTooLong) {
-  EXPECT_THAT(
-      ParseDType(::nlohmann::json::array_t{{"x", "int16", {2, 3}}}),
-      StatusIs(
-          absl::StatusCode::kInvalidArgument,
-          HasSubstr("Error parsing value at position 0: "
-                    "Expected array of size 2, but received: "
-                    "[\"x\",\"int16\",[2,3]]")));
+  EXPECT_THAT(ParseDType(::nlohmann::json::array_t{{"x", "int16", {2, 3}}}),
+              StatusIs(absl::StatusCode::kInvalidArgument,
+                       HasSubstr("Error parsing value at position 0: "
+                                 "Expected array of size 2, but received: "
+                                 "[\"x\",\"int16\",[2,3]]")));
 }
 
 TEST(ParseDType, InvalidFieldName) {
@@ -228,6 +232,15 @@ TEST(ParseDType, DuplicateFieldName) {
                HasSubstr("Field name \"x\" occurs more than once")));
 }
 
+TEST(ValidateDType, RejectsEmptyFields) {
+  // Bypassing the JSON parsers leaves `fields` empty; downstream code
+  // assumes `fields[0]` exists.
+  ZarrDType empty;
+  EXPECT_THAT(ValidateDType(empty),
+              StatusIs(absl::StatusCode::kFailedPrecondition,
+                       HasSubstr("must have at least one field")));
+}
+
 TEST(ParseDType, NonStringFieldBaseDType) {
   EXPECT_THAT(ParseDType(::nlohmann::json::array_t{{"x", 3}}),
               StatusIs(absl::StatusCode::kInvalidArgument,
@@ -246,19 +259,26 @@ TEST(ParseDType, InvalidFieldBaseDType) {
 }
 
 TEST(ChooseBaseDTypeTest, RoundTrip) {
+  // Exhaustively cover every tensorstore numeric data type using the
+  // TENSORSTORE_FOR_EACH_*_DATA_TYPE macros, plus the byte/char types that
+  // round-trip through `r8`.
+  // clang-format off
   constexpr tensorstore::DataType kSupportedDataTypes[] = {
-      dtype_v<bool>, dtype_v<uint8_t>, dtype_v<uint16_t>, dtype_v<uint32_t>,
-      dtype_v<uint64_t>, dtype_v<int8_t>, dtype_v<int16_t>,
-      dtype_v<int32_t>,  dtype_v<int64_t>,
-      dtype_v<tensorstore::dtypes::bfloat16_t>,
-      dtype_v<tensorstore::dtypes::float16_t>,
-      dtype_v<tensorstore::dtypes::float32_t>,
-      dtype_v<tensorstore::dtypes::float64_t>,
-      dtype_v<tensorstore::dtypes::complex64_t>,
-      dtype_v<tensorstore::dtypes::complex128_t>,
+#define TENSORSTORE_INTERNAL_SUPPORTED_DATA_TYPE(T) \
+      dtype_v<tensorstore::dtypes::T>, \
+      /**/
+      TENSORSTORE_INTERNAL_SUPPORTED_DATA_TYPE(bool_t)
+      TENSORSTORE_FOR_EACH_INT_DATA_TYPE(
+          TENSORSTORE_INTERNAL_SUPPORTED_DATA_TYPE)
+      TENSORSTORE_FOR_EACH_FLOAT_DATA_TYPE(
+          TENSORSTORE_INTERNAL_SUPPORTED_DATA_TYPE)
+      TENSORSTORE_FOR_EACH_COMPLEX_DATA_TYPE(
+          TENSORSTORE_INTERNAL_SUPPORTED_DATA_TYPE)
+#undef TENSORSTORE_INTERNAL_SUPPORTED_DATA_TYPE
       dtype_v<tensorstore::dtypes::byte_t>,
       dtype_v<tensorstore::dtypes::char_t>,
   };
+  // clang-format on
   for (auto dtype : kSupportedDataTypes) {
     SCOPED_TRACE(absl::StrCat("dtype=", dtype));
     TENSORSTORE_ASSERT_OK_AND_ASSIGN(auto base_zarr_dtype,
@@ -296,24 +316,22 @@ TEST(ParseDType, StructNameNewFormat) {
                                   {{"name", "y"}, {"data_type", "int16"}}})}}}};
 
   ZarrDType expected{};
-  AddFieldToZarrDType(expected,
-                      {{/*.encoded_dtype=*/"uint8",
-                        /*.dtype=*/dtype_v<uint8_t>,
-                        /*.flexible_shape=*/{}},
-                       /*.name=*/"x",
-                       /*.field_shape=*/{},
-                       /*.num_inner_elements=*/1,
-                       /*.byte_offset=*/0,
-                       /*.num_bytes=*/1});
-  AddFieldToZarrDType(expected,
-                      {{/*.encoded_dtype=*/"int16",
-                        /*.dtype=*/dtype_v<int16_t>,
-                        /*.flexible_shape=*/{}},
-                       /*.name=*/"y",
-                       /*.field_shape=*/{},
-                       /*.num_inner_elements=*/1,
-                       /*.byte_offset=*/0,
-                       /*.num_bytes=*/2});
+  AddFieldToZarrDType(expected, {{/*.encoded_dtype=*/"uint8",
+                                  /*.dtype=*/dtype_v<uint8_t>,
+                                  /*.flexible_shape=*/{}},
+                                 /*.name=*/"x",
+                                 /*.field_shape=*/{},
+                                 /*.num_inner_elements=*/1,
+                                 /*.byte_offset=*/0,
+                                 /*.num_bytes=*/1});
+  AddFieldToZarrDType(expected, {{/*.encoded_dtype=*/"int16",
+                                  /*.dtype=*/dtype_v<int16_t>,
+                                  /*.flexible_shape=*/{}},
+                                 /*.name=*/"y",
+                                 /*.field_shape=*/{},
+                                 /*.num_inner_elements=*/1,
+                                 /*.byte_offset=*/0,
+                                 /*.num_bytes=*/2});
 
   EXPECT_THAT(ParseDType(input), IsOkAndHolds(expected));
 
@@ -353,8 +371,8 @@ TEST(ParseDType, ObjectFieldFormat) {
   ::nlohmann::json input = {
       {"name", "struct"},
       {"configuration",
-       {{"fields",
-         ::nlohmann::json::array({{{"name", "field1"}, {"data_type", "uint32"}}})}}}};
+       {{"fields", ::nlohmann::json::array(
+                       {{{"name", "field1"}, {"data_type", "uint32"}}})}}}};
 
   TENSORSTORE_ASSERT_OK_AND_ASSIGN(auto dtype, ParseDType(input));
   ASSERT_EQ(dtype.fields.size(), 1);
@@ -365,10 +383,10 @@ TEST(ParseDType, ObjectFieldFormat) {
 
 TEST(ParseDType, StructuredWithTupleFields) {
   // "structured" (legacy) requires tuple format fields
-  ::nlohmann::json input = {{"name", "structured"},
-                            {"configuration",
-                             {{"fields",
-                               ::nlohmann::json::array({{"field1", "uint32"}})}}}};
+  ::nlohmann::json input = {
+      {"name", "structured"},
+      {"configuration",
+       {{"fields", ::nlohmann::json::array({{"field1", "uint32"}})}}}};
 
   TENSORSTORE_ASSERT_OK_AND_ASSIGN(auto dtype, ParseDType(input));
   ASSERT_EQ(dtype.fields.size(), 1);
@@ -378,10 +396,10 @@ TEST(ParseDType, StructuredWithTupleFields) {
 
 TEST(ParseDType, StructWithTupleFieldsRejected) {
   // "struct" (new) must NOT accept tuple format fields
-  ::nlohmann::json input = {{"name", "struct"},
-                            {"configuration",
-                             {{"fields",
-                               ::nlohmann::json::array({{"field1", "uint32"}})}}}};
+  ::nlohmann::json input = {
+      {"name", "struct"},
+      {"configuration",
+       {{"fields", ::nlohmann::json::array({{"field1", "uint32"}})}}}};
 
   EXPECT_THAT(ParseDType(input),
               StatusIs(absl::StatusCode::kInvalidArgument,
@@ -393,12 +411,13 @@ TEST(ParseDType, StructuredWithObjectFieldsRejected) {
   ::nlohmann::json input = {
       {"name", "structured"},
       {"configuration",
-       {{"fields",
-         ::nlohmann::json::array({{{"name", "field1"}, {"data_type", "uint32"}}})}}}};
+       {{"fields", ::nlohmann::json::array(
+                       {{{"name", "field1"}, {"data_type", "uint32"}}})}}}};
 
-  EXPECT_THAT(ParseDType(input),
-              StatusIs(absl::StatusCode::kInvalidArgument,
-                       HasSubstr("structured dtype requires fields as arrays")));
+  EXPECT_THAT(
+      ParseDType(input),
+      StatusIs(absl::StatusCode::kInvalidArgument,
+               HasSubstr("structured dtype requires fields as arrays")));
 }
 
 TEST(ParseDType, StructWithMixedFieldsRejected) {
@@ -406,9 +425,9 @@ TEST(ParseDType, StructWithMixedFieldsRejected) {
   ::nlohmann::json input = {
       {"name", "struct"},
       {"configuration",
-       {{"fields",
-         ::nlohmann::json::array({{{"name", "obj_field"}, {"data_type", "int8"}},
-                                  {"tuple_field", "int16"}})}}}};
+       {{"fields", ::nlohmann::json::array(
+                       {{{"name", "obj_field"}, {"data_type", "int8"}},
+                        {"tuple_field", "int16"}})}}}};
 
   EXPECT_THAT(ParseDType(input),
               StatusIs(absl::StatusCode::kInvalidArgument,
@@ -456,9 +475,10 @@ TEST(ParseDType, StructEmptyFieldsRejected) {
       {"name", "struct"},
       {"configuration", {{"fields", ::nlohmann::json::array()}}}};
 
-  EXPECT_THAT(ParseDType(input),
-              StatusIs(absl::StatusCode::kInvalidArgument,
-                       HasSubstr("struct data type requires at least one field")));
+  EXPECT_THAT(
+      ParseDType(input),
+      StatusIs(absl::StatusCode::kInvalidArgument,
+               HasSubstr("struct data type requires at least one field")));
 }
 
 TEST(ParseDType, StructuredEmptyFieldsRejected) {
@@ -493,10 +513,10 @@ TEST(ParseDType, NestedStructNotSupported) {
                {"data_type",
                 {{"name", "struct"},
                  {"configuration",
-                  {{"fields",
-                    ::nlohmann::json::array(
-                        {{{"name", "x"}, {"data_type", "float32"}},
-                         {{"name", "y"}, {"data_type", "float32"}}})}}}}}}})}}}};
+                  {{"fields", ::nlohmann::json::array(
+                                  {{{"name", "x"}, {"data_type", "float32"}},
+                                   {{"name", "y"},
+                                    {"data_type", "float32"}}})}}}}}}})}}}};
 
   EXPECT_THAT(ParseDType(input),
               StatusIs(absl::StatusCode::kInvalidArgument,
@@ -510,12 +530,12 @@ TEST(ParseDType, ExtensionDataTypeWithConfigNotSupported) {
   ::nlohmann::json input = {
       {"name", "struct"},
       {"configuration",
-       {{"fields",
-         ::nlohmann::json::array(
-             {{{"name", "timestamp"},
-               {"data_type",
-                {{"name", "numpy.datetime64"},
-                 {"configuration", {{"unit", "s"}, {"scale_factor", 1}}}}}}})}}}};
+       {{"fields", ::nlohmann::json::array(
+                       {{{"name", "timestamp"},
+                         {"data_type",
+                          {{"name", "numpy.datetime64"},
+                           {"configuration",
+                            {{"unit", "s"}, {"scale_factor", 1}}}}}}})}}}};
 
   EXPECT_THAT(ParseDType(input),
               StatusIs(absl::StatusCode::kInvalidArgument,
@@ -561,15 +581,14 @@ TEST(ParseDType, StructuredWithFieldShape) {
                         {{"name", "array"}, {"data_type", "r16"}}})}}}};
 
   ZarrDType expected{};
-  AddFieldToZarrDType(expected,
-                      {{/*.encoded_dtype=*/"int32",
-                        /*.dtype=*/dtype_v<int32_t>,
-                        /*.flexible_shape=*/{}},
-                       /*.name=*/"scalar",
-                       /*.field_shape=*/{},
-                       /*.num_inner_elements=*/1,
-                       /*.byte_offset=*/0,
-                       /*.num_bytes=*/4});
+  AddFieldToZarrDType(expected, {{/*.encoded_dtype=*/"int32",
+                                  /*.dtype=*/dtype_v<int32_t>,
+                                  /*.flexible_shape=*/{}},
+                                 /*.name=*/"scalar",
+                                 /*.field_shape=*/{},
+                                 /*.num_inner_elements=*/1,
+                                 /*.byte_offset=*/0,
+                                 /*.num_bytes=*/4});
   AddFieldToZarrDType(expected,
                       {{/*.encoded_dtype=*/"r16",
                         /*.dtype=*/dtype_v<tensorstore::dtypes::byte_t>,
@@ -583,10 +602,77 @@ TEST(ParseDType, StructuredWithFieldShape) {
   EXPECT_THAT(ParseDType(input), IsOkAndHolds(expected));
 }
 
+TEST(ParseBaseDType, R24FieldShape) {
+  // r24 = 24 bits = 3 bytes; field_shape encodes that as {3}.
+  EXPECT_THAT("r24", ParsesAsBaseDType(dtype_v<tensorstore::dtypes::byte_t>,
+                                       std::vector<Index>{3}));
+}
+
+TEST(ParseDType, R24SingleField) {
+  // r24 as a top-level dtype yields a single field with field_shape {3}.
+  TENSORSTORE_ASSERT_OK_AND_ASSIGN(auto dtype, ParseDType("r24"));
+  ASSERT_EQ(dtype.fields.size(), 1);
+  EXPECT_FALSE(dtype.has_fields);
+  EXPECT_EQ(dtype.bytes_per_outer_element, 3);
+  EXPECT_EQ(dtype.fields[0].dtype, dtype_v<tensorstore::dtypes::byte_t>);
+  EXPECT_EQ(dtype.fields[0].num_bytes, 3);
+  EXPECT_EQ(dtype.fields[0].num_inner_elements, 3);
+  EXPECT_THAT(dtype.fields[0].field_shape, ::testing::ElementsAre(3));
+}
+
+TEST(ParseDType, R24InStruct) {
+  // r24 nested inside a struct: bytes pack normally, field_shape preserved.
+  ::nlohmann::json input = {
+      {"name", "struct"},
+      {"configuration",
+       {{"fields",
+         ::nlohmann::json::array({{{"name", "tag"}, {"data_type", "uint8"}},
+                                  {{"name", "rgb"}, {"data_type", "r24"}}})}}}};
+
+  ZarrDType expected{};
+  AddFieldToZarrDType(expected, {{/*.encoded_dtype=*/"uint8",
+                                  /*.dtype=*/dtype_v<uint8_t>,
+                                  /*.flexible_shape=*/{}},
+                                 /*.name=*/"tag",
+                                 /*.field_shape=*/{},
+                                 /*.num_inner_elements=*/1,
+                                 /*.byte_offset=*/0,
+                                 /*.num_bytes=*/1});
+  AddFieldToZarrDType(expected,
+                      {{/*.encoded_dtype=*/"r24",
+                        /*.dtype=*/dtype_v<tensorstore::dtypes::byte_t>,
+                        /*.flexible_shape=*/{3}},
+                       /*.name=*/"rgb",
+                       /*.field_shape=*/{3},
+                       /*.num_inner_elements=*/3,
+                       /*.byte_offset=*/0,
+                       /*.num_bytes=*/3});
+
+  EXPECT_THAT(ParseDType(input), IsOkAndHolds(expected));
+  EXPECT_EQ(expected.bytes_per_outer_element, 4);
+  EXPECT_EQ(expected.fields[1].byte_offset, 1);
+}
+
+TEST(ParseDType, R24SerializationRoundTrip) {
+  ::nlohmann::json input = {
+      {"name", "struct"},
+      {"configuration",
+       {{"fields",
+         ::nlohmann::json::array({{{"name", "rgb"}, {"data_type", "r24"}}})}}}};
+
+  TENSORSTORE_ASSERT_OK_AND_ASSIGN(auto dtype, ParseDType(input));
+  ::nlohmann::json output = dtype;
+  // Field's data_type round-trips as the literal "r24" string.
+  EXPECT_EQ(output["configuration"]["fields"][0]["data_type"], "r24");
+  // Re-parsing the serialized form yields the same dtype.
+  TENSORSTORE_ASSERT_OK_AND_ASSIGN(auto reparsed, ParseDType(output));
+  EXPECT_EQ(dtype, reparsed);
+}
+
 TEST(ParseDType, ManyFieldsOffsets) {
-  // Verify that many fields are supported and byte offsets are computed correctly.
-  // There is no explicit limit on the number of fields; the limit is bounded only
-  // by memory and integer overflow in byte offset calculations.
+  // Verify that many fields are supported and byte offsets are computed
+  // correctly. There is no explicit limit on the number of fields; the limit is
+  // bounded only by memory and integer overflow in byte offset calculations.
   ::nlohmann::json::array_t fields;
   for (int i = 0; i < 1000; ++i) {
     fields.push_back({{"name", absl::StrCat("f", i)}, {"data_type", "int64"}});

@@ -79,12 +79,18 @@ TEST_F(ImdsCredentialsProviderTest, Basic) {
 }
 
 TEST_F(ImdsCredentialsProviderTest, WithEnvironmentVariable) {
-  // NOTE: If the aws_c_auth library is updated to use the environment variable
-  // to determine the endpoint, this test will fail.
-  SetEnv("AWS_EC2_METADATA_SERVICE_ENDPOINT", "http://localhost:1234/");
+  // Depending on the aws_c_auth library version, the endpoint may be set to
+  // localhost or it may be read from the environment variable.
+  static constexpr char kEndpoint[] = "http://localhost:1234/";
+  SetEnv("AWS_EC2_METADATA_SERVICE_ENDPOINT", kEndpoint);
+  SetEnv("AWS_EC2_METADATA_SERVICE_ENDPOINT_MODE", "IPv4");
 
-  EnableAwsHttpMocking(DefaultImdsCredentialFlow(
-      kApiToken, kAccessKey, kSecretKey, kSessionToken, expiry));
+  auto flow1 = DefaultImdsCredentialFlow(kApiToken, kAccessKey, kSecretKey,
+                                         kSessionToken, expiry);
+  auto flow2 = DefaultImdsCredentialFlow(kApiToken, kAccessKey, kSecretKey,
+                                         kSessionToken, expiry, kEndpoint);
+  flow1.insert(flow1.end(), flow2.begin(), flow2.end());
+  EnableAwsHttpMocking(flow1);
 
   AwsCredentialsProvider provider = MakeImds();
   auto credentials_future = GetAwsCredentials(provider.get());

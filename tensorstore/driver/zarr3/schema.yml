@@ -23,9 +23,9 @@ allOf:
         - type: "null"
       title: Name of field to open.
       description: |
-        Must be specified if the `.metadata.data_type` specified in the array
-        metadata has more than one field.  Cannot be specified together with
-        :json:`"open_as_void": true`.
+        Must be specified if the :json:schema:`~driver/zarr3/Metadata.data_type`
+        specified in the array metadata has more than one field.  Cannot be
+        specified together with :json:`"open_as_void": true`.
       default: null
     open_as_void:
       type: boolean
