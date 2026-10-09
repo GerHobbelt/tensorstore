@@ -1558,6 +1558,46 @@ TEST(SharedArrayTest, AllocateArrayFromDomain) {
             ToString(array));
 }
 
+TEST(SharedArrayTest, AllocateArrayFromDomainMinOriginByteOffset) {
+  constexpr Index kOrigin = -(Index(1) << 60);
+  auto array = tensorstore::AllocateArray<int64_t>(BoxView({kOrigin}, {2}),
+                                                   ContiguousLayoutOrder::c,
+                                                   tensorstore::value_init);
+  ASSERT_EQ(std::numeric_limits<Index>::min(),
+            array.layout().origin_byte_offset());
+  EXPECT_EQ(0, array(kOrigin));
+  EXPECT_EQ(0, array(kOrigin + 1));
+  array(kOrigin) = 42;
+  array(kOrigin + 1) = 43;
+  EXPECT_EQ(42, array(kOrigin));
+  EXPECT_EQ(43, array(kOrigin + 1));
+
+  auto like_array = tensorstore::AllocateArrayLike<int64_t>(
+      array.layout(), ContiguousLayoutOrder::c, tensorstore::value_init);
+  ASSERT_EQ(std::numeric_limits<Index>::min(),
+            like_array.layout().origin_byte_offset());
+  EXPECT_EQ(0, like_array(kOrigin));
+  EXPECT_EQ(0, like_array(kOrigin + 1));
+  like_array(kOrigin) = 99;
+  like_array(kOrigin + 1) = 100;
+  EXPECT_EQ(99, like_array(kOrigin));
+  EXPECT_EQ(100, like_array(kOrigin + 1));
+
+  auto offset_array = tensorstore::MakeOffsetArray<int64_t>({kOrigin}, {7, 8});
+  ASSERT_EQ(std::numeric_limits<Index>::min(),
+            offset_array.layout().origin_byte_offset());
+  EXPECT_EQ(7, offset_array(kOrigin));
+  EXPECT_EQ(8, offset_array(kOrigin + 1));
+
+  int64_t raw_data[2] = {11, 22};
+  tensorstore::Array<int64_t, 1, offset_origin> view_from_box(
+      &raw_data[0], BoxView({kOrigin}, {2}));
+  ASSERT_EQ(std::numeric_limits<Index>::min(),
+            view_from_box.layout().origin_byte_offset());
+  EXPECT_EQ(11, view_from_box(kOrigin));
+  EXPECT_EQ(22, view_from_box(kOrigin + 1));
+}
+
 TEST(SharedArrayTest, AllocateArrayWithLayoutPermutation) {
   Index shape[] = {2, 3, 4};
   DimensionIndex permutation[] = {2, 0, 1};
@@ -2067,6 +2107,50 @@ TEST(ArraySerializationTest, CorruptedShapeConstraint) {
   EXPECT_THAT(DecodeBatch(corrupt_buffer, array),
               StatusIs(absl::StatusCode::kDataLoss,
                        HasSubstr("Invalid negative size -5 for dimension 0")));
+}
+
+TEST(ArraySerializationTest, RejectsInvalidShapeAndOrigin) {
+  int8_t data = 42;
+  std::shared_ptr<int8_t> ptr(std::shared_ptr<void>(), &data);
+
+  // Case B: zero_origin with shape[0] = kInfSize and zero_byte_strides = 1.
+  {
+    SharedArray<int8_t> invalid_zero_origin(ptr,
+                                            StridedLayout<>({kInfSize}, {0}));
+    TENSORSTORE_ASSERT_OK_AND_ASSIGN(auto encoded,
+                                     EncodeBatch(invalid_zero_origin));
+    SharedArray<int8_t> decoded;
+    EXPECT_THAT(DecodeBatch(encoded, decoded),
+                StatusIs(absl::StatusCode::kDataLoss));
+  }
+
+  // Case C: offset_origin with origin[0] = kMaxFiniteIndex and shape[0] = 10.
+  {
+    tensorstore::SharedOffsetArray<int8_t> invalid_offset_origin(
+        ptr, StridedLayout<dynamic_rank, offset_origin>(
+                 {tensorstore::kMaxFiniteIndex}, {10}, {0}));
+    TENSORSTORE_ASSERT_OK_AND_ASSIGN(auto encoded,
+                                     EncodeBatch(invalid_offset_origin));
+    tensorstore::SharedOffsetArray<int8_t> decoded;
+    EXPECT_THAT(DecodeBatch(encoded, decoded),
+                StatusIs(absl::StatusCode::kDataLoss));
+  }
+
+  // Case A: zero_origin with shape[0] = kInfSize and zero_byte_strides = 0.
+  {
+    TENSORSTORE_ASSERT_OK_AND_ASSIGN(auto base_buffer,
+                                     EncodeBatch(MakeArray<int8_t>({42})));
+    auto pos = base_buffer.find("int8");
+    ASSERT_NE(pos, std::string::npos);
+    const Index inf_size = kInfSize;
+    std::string corrupt_buffer = base_buffer;
+    corrupt_buffer.replace(pos + 5, sizeof(inf_size),
+                           reinterpret_cast<const char*>(&inf_size),
+                           sizeof(inf_size));
+    SharedArray<int8_t> decoded;
+    EXPECT_THAT(DecodeBatch(corrupt_buffer, decoded),
+                StatusIs(absl::StatusCode::kDataLoss));
+  }
 }
 
 }  // namespace

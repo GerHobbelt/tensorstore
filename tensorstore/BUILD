@@ -22,6 +22,7 @@ tensorstore_cc_library(
         ":contiguous_layout",
         ":data_type",
         ":index",
+        ":index_interval",
         ":rank",
         ":static_cast",
         ":strided_layout",
@@ -178,6 +179,7 @@ tensorstore_cc_library(
         "//tensorstore/internal:intrusive_ptr",
         "//tensorstore/internal/container:hash_set_of_any",
         "//tensorstore/internal/container:intrusive_red_black_tree",
+        "@abseil-cpp//absl/base:core_headers",
         "@abseil-cpp//absl/synchronization",
         "@abseil-cpp//absl/types:compare",
     ],
@@ -432,6 +434,7 @@ tensorstore_cc_library(
     deps = [
         ":index",
         ":rank",
+        "//tensorstore/internal:integer_overflow",
         "//tensorstore/util:dimension_set",
         "//tensorstore/util:span",
         "@abseil-cpp//absl/log:absl_check",

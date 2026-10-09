@@ -20,10 +20,12 @@
 #include <type_traits>
 #include <typeinfo>
 
+#include "absl/base/thread_annotations.h"
 #include "absl/synchronization/mutex.h"
 #include "tensorstore/batch.h"
 #include "tensorstore/internal/container/hash_set_of_any.h"
 #include "tensorstore/internal/container/intrusive_red_black_tree.h"
+#include "tensorstore/internal/intrusive_ptr.h"
 
 namespace tensorstore {
 
@@ -46,12 +48,17 @@ class Batch::Impl : public Batch::ImplBase {
 
  public:
   class Entry : public internal::HashSetOfAny::Entry,
-                public DepthTree::NodeBase {
+                public DepthTree::NodeBase,
+                public internal::AtomicReferenceCount<Entry> {
    public:
-    Entry(size_t nesting_depth) : nesting_depth_(nesting_depth) {}
+    using Ptr = internal::IntrusivePtr<Entry>;
 
-    // Submits the batch, and is responsible for destroying the entry when done.
-    virtual void Submit(Batch::View batch) = 0;
+    Entry(size_t nesting_depth)
+        : internal::AtomicReferenceCount<Entry>(/*initial_ref_count=*/1),
+          nesting_depth_(nesting_depth) {}
+
+    // Submits the batch. `self` must be equivalent to `this`.
+    virtual void Submit(Ptr self, Batch::View batch) = 0;
 
    private:
     friend class Batch;
@@ -94,11 +101,11 @@ class Batch::Impl : public Batch::ImplBase {
   ~Impl();
 
  private:
-  void InsertIntoDepthTree(Entry& entry);
+  void InsertIntoDepthTree(Entry& entry) ABSL_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
   absl::Mutex mutex_;
-  internal::HashSetOfAny entries_;
-  DepthTree nesting_depths_;
+  internal::HashSetOfAny entries_ ABSL_GUARDED_BY(mutex_);
+  DepthTree nesting_depths_ ABSL_GUARDED_BY(mutex_);
 };
 
 }  // namespace tensorstore

@@ -34,6 +34,7 @@
 #include "tensorstore/data_type.h"
 #include "tensorstore/data_type_conversion.h"
 #include "tensorstore/index.h"
+#include "tensorstore/index_interval.h"
 #include "tensorstore/internal/element_copy_function.h"
 #include "tensorstore/internal/integer_overflow.h"
 #include "tensorstore/internal/unaligned_data_type_functions.h"
@@ -186,7 +187,8 @@ SharedElementPointer<void> AllocateArrayLike(
   for (auto order_i = dimension_order.size(); order_i--;) {
     const DimensionIndex source_dim = dimension_order[order_i];
     byte_strides[source_dim] = stride;
-    stride *= source_layout.shape()[source_dim];
+    stride = internal::wrap_on_overflow::Multiply(
+        stride, source_layout.shape()[source_dim]);
     if (internal::MulOverflow(num_elements, source_layout.shape()[source_dim],
                               &num_elements)) {
       num_elements = kInfSize;
@@ -345,6 +347,16 @@ bool DecodeArray<OriginKind>::Decode(
   }
   if constexpr (OriginKind == offset_origin) {
     if (!serialization::Decode(source, array.origin())) return false;
+  }
+  for (DimensionIndex i = 0; i < rank; ++i) {
+    const Index origin_i =
+        (OriginKind == offset_origin) ? array.origin()[i] : Index(0);
+    if (!IndexInterval::ValidSized(origin_i, array.shape()[i])) {
+      source.Fail(serialization::DecodeError(
+          absl::StrFormat("Invalid origin %d and size %d for dimension %d",
+                          origin_i, array.shape()[i], i)));
+      return false;
+    }
   }
   uint32_t bits;
   if (!riegeli::ReadVarint32(source.reader(), bits)) return false;
