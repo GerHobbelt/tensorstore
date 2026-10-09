@@ -30,7 +30,7 @@ TEST(GetEnvTest, Basic) {
   SetEnv("TENSORSTORE_TEST_ENV_VAR", "test env var");
   {
     auto var = GetEnv("TENSORSTORE_TEST_ENV_VAR");
-    EXPECT_TRUE(var);
+    ASSERT_TRUE(var.has_value());
     EXPECT_EQ("test env var", *var);
   }
 
@@ -48,7 +48,10 @@ TEST(GetEnvTest, GetEnvironmentMap) {
 
   auto allenv = GetEnvironmentMap();
   EXPECT_FALSE(allenv.empty());
-  EXPECT_THAT(allenv.count("TENSORSTORE_TEST_ENV_VAR"), 1);
+  EXPECT_THAT(allenv, ::testing::Contains(::testing::Pair(
+                          "TENSORSTORE_TEST_ENV_VAR", "test env var")));
+  UnsetEnv("TENSORSTORE_TEST_ENV_VAR");
+  EXPECT_FALSE(GetEnv("TENSORSTORE_TEST_ENV_VAR"));
 }
 
 TEST(GetEnvTest, ParseBool) {
